@@ -127,8 +127,16 @@ impl CommandFilterContext {
     ///
     /// # Returns
     /// A raw pointer to the retained RedisModuleString
+    ///
+    /// # Safety
+    /// The returned pointer has an incremented reference count. Redis takes ownership
+    /// when the pointer is passed to command filter APIs (CommandFilterArgReplace or
+    /// CommandFilterArgInsert), so the caller should not manually free this string.
+    /// The null context parameter is safe here because command filter strings don't
+    /// require a specific context for memory management.
     fn create_and_retain_string(arg: &str) -> *mut raw::RedisModuleString {
         let new_arg = RedisString::create(None, arg);
+        // Pass null context as command filter strings are context-independent
         raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
         new_arg.inner
     }
