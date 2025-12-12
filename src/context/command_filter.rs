@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::os::raw::c_int;
-use std::sync::{Mutex, OnceLock};
 
 use crate::raw;
 use crate::{Context, RedisError, RedisString};
@@ -17,8 +15,9 @@ impl CommandFilterContext {
     /// Create a new CommandFilterContext from a raw pointer.
     ///
     /// # Safety
-    /// The caller must ensure that the pointer is valid.
-    pub(crate) unsafe fn new(fctx: *mut raw::RedisModuleCommandFilterCtx) -> Self {
+    /// The caller must ensure that the pointer is valid and only used within
+    /// the lifetime of the command filter callback.
+    pub unsafe fn new(fctx: *mut raw::RedisModuleCommandFilterCtx) -> Self {
         CommandFilterContext { fctx }
     }
 
@@ -29,7 +28,7 @@ impl CommandFilterContext {
         unsafe { raw::RedisModule_CommandFilterArgsCount.unwrap()(self.fctx) }
     }
 
-    /// Get the argument at the specified position.
+    /// Get the argument at the specified position as a string slice.
     ///
     /// Wrapper for `RedisModule_CommandFilterArgGet`.
     ///
@@ -37,20 +36,19 @@ impl CommandFilterContext {
     /// * `pos` - The position of the argument (0-based)
     ///
     /// # Returns
-    /// The argument as a RedisString, or None if the position is out of bounds.
-    pub fn arg_get(&self, pos: c_int) -> Option<RedisString> {
+    /// The argument as a string slice, or None if the position is out of bounds
+    /// or the argument is not valid UTF-8.
+    ///
+    /// # Note
+    /// The returned string slice is only valid for the duration of the filter callback.
+    /// Do not store it beyond the callback's lifetime.
+    pub fn arg_get_str(&self, pos: c_int) -> Option<&str> {
         unsafe {
             let ptr = raw::RedisModule_CommandFilterArgGet.unwrap()(self.fctx, pos);
             if ptr.is_null() {
                 None
             } else {
-                // Note: The returned string should not be retained by the module.
-                // We create a RedisString wrapper but pass null for the context
-                // since we don't have access to it here.
-                Some(RedisString::from_redis_module_string(
-                    std::ptr::null_mut(),
-                    ptr,
-                ))
+                RedisString::from_ptr(ptr).ok()
             }
         }
     }
@@ -133,24 +131,35 @@ impl CommandFilterContext {
 }
 
 /// Type alias for command filter callbacks.
-pub type CommandFilterCallback = fn(&CommandFilterContext);
-
-// Global registry to store filter callbacks
-// The key is the filter pointer, the value is the callback function
-static FILTER_REGISTRY: OnceLock<Mutex<HashMap<usize, CommandFilterCallback>>> = OnceLock::new();
-
-fn get_filter_registry() -> &'static Mutex<HashMap<usize, CommandFilterCallback>> {
-    FILTER_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
+///
+/// Note: Due to limitations in the Redis Module C API, command filters cannot receive
+/// user data. Therefore, the callback must be a static function pointer, not a closure
+/// that captures variables.
+pub type CommandFilterCallback = unsafe extern "C" fn(*mut raw::RedisModuleCommandFilterCtx);
 
 impl Context {
     /// Register a command filter callback.
     ///
     /// Wrapper for `RedisModule_RegisterCommandFilter`.
     ///
-    /// The callback will be invoked for each command executed. Note that the
-    /// callback must be a function pointer (not a closure) due to limitations
-    /// in the Redis Module API.
+    /// The callback will be invoked for each command executed. Due to limitations
+    /// in the Redis Module C API, the callback must be an `extern "C"` function that
+    /// matches the signature expected by Redis.
+    ///
+    /// Typically, you would create a wrapper function that calls your Rust implementation:
+    ///
+    /// ```no_run
+    /// # use redis_module::raw;
+    /// # use redis_module::CommandFilterContext;
+    /// unsafe extern "C" fn my_filter_wrapper(fctx: *mut raw::RedisModuleCommandFilterCtx) {
+    ///     let filter_ctx = CommandFilterContext::new(fctx);
+    ///     my_filter_impl(&filter_ctx);
+    /// }
+    ///
+    /// fn my_filter_impl(fctx: &CommandFilterContext) {
+    ///     // Your filter logic here
+    /// }
+    /// ```
     ///
     /// # Arguments
     /// * `callback` - The callback function to be invoked for each command
@@ -159,39 +168,15 @@ impl Context {
     /// # Returns
     /// A pointer to the registered command filter, which can be used to unregister it later.
     ///
-    /// # Example
-    /// ```no_run
-    /// # use redis_module::{Context, RedisResult};
-    /// # use redis_module::context::command_filter::CommandFilterContext;
-    /// fn my_filter(fctx: &CommandFilterContext) {
-    ///     // Filter logic here
-    /// }
-    ///
-    /// fn my_command(ctx: &Context, _args: Vec<redis_module::RedisString>) -> RedisResult {
-    ///     let filter = ctx.register_command_filter(my_filter, 0);
-    ///     // ...later...
-    ///     ctx.unregister_command_filter(filter)?;
-    ///     Ok(().into())
-    /// }
-    /// ```
-    pub fn register_command_filter(
+    /// # Safety
+    /// The caller must ensure that the callback function is valid and properly handles
+    /// the raw pointer it receives.
+    pub unsafe fn register_command_filter(
         &self,
         callback: CommandFilterCallback,
         flags: c_int,
     ) -> *mut raw::RedisModuleCommandFilter {
-        let filter_ptr = unsafe {
-            raw::RedisModule_RegisterCommandFilter.unwrap()(
-                self.ctx,
-                Some(raw_filter_callback),
-                flags,
-            )
-        };
-
-        // Store the callback in the registry
-        let mut registry = get_filter_registry().lock().unwrap();
-        registry.insert(filter_ptr as usize, callback);
-
-        filter_ptr
+        raw::RedisModule_RegisterCommandFilter.unwrap()(self.ctx, Some(callback), flags)
     }
 
     /// Unregister a previously registered command filter.
@@ -211,26 +196,11 @@ impl Context {
             unsafe { raw::RedisModule_UnregisterCommandFilter.unwrap()(self.ctx, filter) }.into();
 
         if status == raw::Status::Ok {
-            // Remove the callback from the registry
-            let mut registry = get_filter_registry().lock().unwrap();
-            registry.remove(&(filter as usize));
             Ok(())
         } else {
             Err(RedisError::Str(
                 "Failed to unregister command filter, filter may not exist",
             ))
         }
-    }
-}
-
-extern "C" fn raw_filter_callback(fctx: *mut raw::RedisModuleCommandFilterCtx) {
-    let ctx = unsafe { CommandFilterContext::new(fctx) };
-
-    // Call all registered callbacks
-    // Note: Since the C API doesn't give us a way to identify which filter this is,
-    // we call all registered callbacks. This is a limitation of the current approach.
-    let registry = get_filter_registry().lock().unwrap();
-    for callback in registry.values() {
-        callback(&ctx);
     }
 }
