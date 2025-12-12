@@ -117,6 +117,22 @@ impl CommandFilterContext {
         output
     }
 
+    /// Helper method to create and retain a RedisString for command filter operations.
+    ///
+    /// This centralizes the pattern of creating a RedisString and incrementing its
+    /// reference count, which is required when passing strings to command filter APIs.
+    ///
+    /// # Arguments
+    /// * `arg` - The string value to create a RedisString from
+    ///
+    /// # Returns
+    /// A raw pointer to the retained RedisModuleString
+    fn create_and_retain_string(arg: &str) -> *mut raw::RedisModuleString {
+        let new_arg = RedisString::create(None, arg);
+        raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
+        new_arg.inner
+    }
+
     /// Replace the argument at the specified position.
     ///
     /// Wrapper for `RedisModule_CommandFilterArgReplace`.
@@ -125,11 +141,8 @@ impl CommandFilterContext {
     /// * `pos` - The position of the argument to replace (0-based)
     /// * `arg` - The new argument value as a string slice
     pub fn arg_replace(&self, pos: c_int, arg: &str) {
-        unsafe {
-            let new_arg = RedisString::create(None, arg);
-            raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
-            raw::RedisModule_CommandFilterArgReplace.unwrap()(self.inner, pos, new_arg.inner)
-        };
+        let new_arg = Self::create_and_retain_string(arg);
+        unsafe { raw::RedisModule_CommandFilterArgReplace.unwrap()(self.inner, pos, new_arg) };
     }
 
     /// Insert an argument at the specified position.
@@ -140,11 +153,8 @@ impl CommandFilterContext {
     /// * `pos` - The position where the argument should be inserted (0-based)
     /// * `arg` - The argument to insert as a string slice
     pub fn arg_insert(&self, pos: c_int, arg: &str) {
-        unsafe {
-            let new_arg = RedisString::create(None, arg);
-            raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
-            raw::RedisModule_CommandFilterArgInsert.unwrap()(self.inner, pos, new_arg.inner)
-        };
+        let new_arg = Self::create_and_retain_string(arg);
+        unsafe { raw::RedisModule_CommandFilterArgInsert.unwrap()(self.inner, pos, new_arg) };
     }
 
     /// Delete the argument at the specified position.
