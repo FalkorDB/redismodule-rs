@@ -28,7 +28,7 @@ impl CommandFilter {
     }
 
     /// Get the raw pointer to the filter.
-    /// 
+    ///
     /// This is useful when you need to store the filter handle and later
     /// recreate the CommandFilter wrapper.
     pub fn as_ptr(&self) -> *mut raw::RedisModuleCommandFilter {
