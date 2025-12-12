@@ -127,6 +127,10 @@ impl CommandFilterContext {
     pub fn arg_replace(&self, pos: c_int, arg: &str) {
         unsafe {
             let new_arg = RedisString::create(None, arg);
+            // Pass null context to string_retain_string because:
+            // 1. Redis allows creating RedisModuleString with NULL context
+            // 2. We cannot guarantee the string won't outlive the current context
+            // 3. This makes the string independent of any specific context lifetime
             raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
             raw::RedisModule_CommandFilterArgReplace.unwrap()(self.inner, pos, new_arg.inner)
         };
@@ -142,6 +146,10 @@ impl CommandFilterContext {
     pub fn arg_insert(&self, pos: c_int, arg: &str) {
         unsafe {
             let new_arg = RedisString::create(None, arg);
+            // Pass null context to string_retain_string because:
+            // 1. Redis allows creating RedisModuleString with NULL context
+            // 2. We cannot guarantee the string won't outlive the current context
+            // 3. This makes the string independent of any specific context lifetime
             raw::string_retain_string(std::ptr::null_mut(), new_arg.inner);
             raw::RedisModule_CommandFilterArgInsert.unwrap()(self.inner, pos, new_arg.inner)
         };
