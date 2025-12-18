@@ -13,7 +13,7 @@ fn handle_cluster_message(ctx: &Context, sender_id: &str, message_type: u8, payl
 
 // Command to register a cluster message receiver
 fn register_receiver(ctx: &Context, _args: Vec<RedisString>) -> RedisResult {
-    ctx.register_cluster_message_receiver(MESSAGE_TYPE, handle_cluster_message);
+    ctx.register_cluster_message_receiver(MESSAGE_TYPE, handle_cluster_message)?;
     Ok("OK".into())
 }
 
@@ -55,7 +55,14 @@ redis_module! {
 
 fn register_receiver_on_load(ctx: &Context, _args: &[RedisString]) -> Status {
     // Automatically register the message receiver when the module loads
-    ctx.register_cluster_message_receiver(MESSAGE_TYPE, handle_cluster_message);
-    ctx.log_notice("Cluster message receiver registered for module initialization");
-    Status::Ok
+    match ctx.register_cluster_message_receiver(MESSAGE_TYPE, handle_cluster_message) {
+        Ok(_) => {
+            ctx.log_notice("Cluster message receiver registered for module initialization");
+            Status::Ok
+        }
+        Err(e) => {
+            ctx.log_warning(&format!("Failed to register cluster message receiver: {:?}", e));
+            Status::Err
+        }
+    }
 }

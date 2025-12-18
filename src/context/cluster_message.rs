@@ -27,21 +27,25 @@ impl Context {
     /// * `message_type` - The message type to register for (0-255)
     /// * `callback` - The callback function to invoke when a message is received
     ///
+    /// # Returns
+    /// * `Ok(())` if the callback was registered successfully
+    /// * `Err(RedisError)` if the callback could not be registered
+    ///
     /// # Example
     /// ```ignore
     /// fn message_handler(ctx: &Context, sender_id: &str, message_type: u8, payload: &[u8]) {
     ///     ctx.log_debug(&format!("Received message from {}: {:?}", sender_id, payload));
     /// }
     ///
-    /// ctx.register_cluster_message_receiver(42, message_handler);
+    /// ctx.register_cluster_message_receiver(42, message_handler)?;
     /// ```
     pub fn register_cluster_message_receiver(
         &self,
         message_type: u8,
         callback: ClusterMessageCallback,
-    ) {
+    ) -> Result<(), RedisError> {
         // Store the callback in a global registry
-        register_callback(message_type, callback);
+        register_callback(message_type, callback)?;
 
         unsafe {
             raw::RedisModule_RegisterClusterMessageReceiver.unwrap()(
@@ -50,6 +54,8 @@ impl Context {
                 Some(raw_cluster_message_callback),
             );
         }
+        
+        Ok(())
     }
 
     /// Wrapper for `RedisModule_SendClusterMessage`.
@@ -114,9 +120,12 @@ fn get_callbacks() -> &'static Mutex<HashMap<u8, ClusterMessageCallback>> {
     CLUSTER_MESSAGE_CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_callback(message_type: u8, callback: ClusterMessageCallback) {
-    let mut callbacks = get_callbacks().lock().unwrap();
+fn register_callback(message_type: u8, callback: ClusterMessageCallback) -> Result<(), RedisError> {
+    let mut callbacks = get_callbacks()
+        .lock()
+        .map_err(|_| RedisError::Str("Failed to acquire lock on cluster message callbacks"))?;
     callbacks.insert(message_type, callback);
+    Ok(())
 }
 
 extern "C" fn raw_cluster_message_callback(
@@ -147,13 +156,19 @@ extern "C" fn raw_cluster_message_callback(
     };
 
     // Look up the callback for this message type
-    let callbacks = get_callbacks().lock().unwrap();
-    if let Some(callback) = callbacks.get(&message_type) {
-        callback(ctx, sender_id_str, message_type, payload_slice);
-    } else {
-        ctx.log_debug(&format!(
-            "No callback registered for cluster message type {}",
-            message_type
-        ));
+    match get_callbacks().lock() {
+        Ok(callbacks) => {
+            if let Some(callback) = callbacks.get(&message_type) {
+                callback(ctx, sender_id_str, message_type, payload_slice);
+            } else {
+                ctx.log_debug(&format!(
+                    "No callback registered for cluster message type {}",
+                    message_type
+                ));
+            }
+        }
+        Err(_) => {
+            ctx.log_warning("Failed to acquire lock on cluster message callbacks");
+        }
     }
 }
