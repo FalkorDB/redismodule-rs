@@ -28,6 +28,7 @@ use self::thread_safe::RedisLockIndicator;
 mod timer;
 
 pub mod blocked;
+pub mod cluster_message;
 pub mod call_reply;
 pub mod commands;
 pub mod defrag;

@@ -29,6 +29,7 @@ pub use crate::configuration::ConfigurationValue;
 pub use crate::configuration::EnumConfigurationValue;
 pub use crate::context::call_reply::FutureCallReply;
 pub use crate::context::call_reply::{CallReply, CallResult, ErrorReply, PromiseCallReply};
+pub use crate::context::cluster_message::ClusterMessageCallback;
 pub use crate::context::commands;
 pub use crate::context::defrag;
 pub use crate::context::key_cursor::ScanKeyCursor;
