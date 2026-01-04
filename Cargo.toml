@@ -121,6 +121,10 @@ name = "expire"
 crate-type = ["cdylib"]
 
 [[example]]
+name = "lru_lfu"
+crate-type = ["cdylib"]
+
+[[example]]
 name = "command_filter"
 crate-type = ["cdylib"]
 
