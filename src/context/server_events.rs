@@ -31,6 +31,12 @@ pub enum ModuleChangeSubevent {
     Unloaded,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub enum ForkChildSubevent {
+    Born,
+    Died,
+}
+
 #[derive(Clone)]
 pub enum ServerEventHandler {
     RuleChanged(fn(&Context, ServerRole)),
@@ -56,6 +62,9 @@ pub static CONFIG_CHANGED_SERVER_EVENTS_LIST: [fn(&Context, &[&str])] = [..];
 
 #[distributed_slice()]
 pub static CRON_SERVER_EVENTS_LIST: [fn(&Context, u64)] = [..];
+
+#[distributed_slice()]
+pub static FORK_CHILD_SERVER_EVENTS_LIST: [fn(&Context, ForkChildSubevent)] = [..];
 
 #[distributed_slice()]
 pub static INFO_COMMAND_HANDLER_LIST: [fn(&InfoContext, bool) -> RedisResult<()>] = [..];
@@ -175,6 +184,23 @@ extern "C" fn config_change_event_callback(
         });
 }
 
+extern "C" fn fork_child_event_callback(
+    ctx: *mut raw::RedisModuleCtx,
+    _eid: raw::RedisModuleEvent,
+    subevent: u64,
+    _data: *mut ::std::os::raw::c_void,
+) {
+    let fork_child_subevent = if subevent == raw::REDISMODULE_SUBEVENT_FORK_CHILD_BORN {
+        ForkChildSubevent::Born
+    } else {
+        ForkChildSubevent::Died
+    };
+    let ctx = Context::new(ctx);
+    FORK_CHILD_SERVER_EVENTS_LIST.iter().for_each(|callback| {
+        callback(&ctx, fork_child_subevent);
+    });
+}
+
 fn register_single_server_event_type<T>(
     ctx: &Context,
     callbacks: &[fn(&Context, T)],
@@ -236,6 +262,12 @@ pub fn register_server_events(ctx: &Context) -> Result<(), RedisError> {
         &CRON_SERVER_EVENTS_LIST,
         raw::REDISMODULE_EVENT_CRON_LOOP,
         Some(cron_callback),
+    )?;
+    register_single_server_event_type(
+        ctx,
+        &FORK_CHILD_SERVER_EVENTS_LIST,
+        raw::REDISMODULE_EVENT_FORK_CHILD,
+        Some(fork_child_event_callback),
     )?;
     Ok(())
 }

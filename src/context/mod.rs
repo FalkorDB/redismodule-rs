@@ -881,6 +881,119 @@ impl Context {
             false
         })
     }
+
+    /// Fork a child process.
+    ///
+    /// This function provides a safe way to fork a child process from within a Redis module.
+    /// The callback function will be invoked in the parent process when the child exits.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A function that will be called when the child process exits. It receives
+    ///   the exit code, whether the child was terminated by a signal, and the user data.
+    /// * `user_data` - A pointer to user data that will be passed to the callback function.
+    ///
+    /// # Returns
+    ///
+    /// Returns the child PID on success, or -1 on error.
+    ///
+    /// # Safety
+    ///
+    /// This function is safe to call from the parent process. However, care must be taken
+    /// with the user_data pointer to ensure it remains valid until the callback is invoked.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// extern "C" fn fork_done_handler(exitcode: c_int, bysignal: c_int, user_data: *mut c_void) {
+    ///     // Handle fork completion
+    /// }
+    ///
+    /// let child_pid = ctx.fork(fork_done_handler, std::ptr::null_mut());
+    /// if child_pid == -1 {
+    ///     // Handle error
+    /// } else if child_pid == 0 {
+    ///     // Child process code
+    /// } else {
+    ///     // Parent process code
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `RedisModule_Fork` is not available.
+    pub fn fork(
+        &self,
+        callback: raw::RedisModuleForkDoneHandler,
+        user_data: *mut c_void,
+    ) -> c_int {
+        raw::fork(callback, user_data)
+    }
+
+    /// Send a heartbeat from the child process to indicate progress.
+    ///
+    /// This function should be called periodically from within a forked child process
+    /// to report progress back to the parent Redis process. The progress value should
+    /// be between 0.0 and 1.0.
+    ///
+    /// # Arguments
+    ///
+    /// * `progress` - A value between 0.0 and 1.0 indicating the progress of the child process.
+    ///
+    /// # Safety
+    ///
+    /// This function must only be called from within a forked child process.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `RedisModule_SendChildHeartbeat` is not available.
+    pub fn send_child_heartbeat(&self, progress: f64) {
+        unsafe {
+            raw::send_child_heartbeat(progress);
+        }
+    }
+
+    /// Exit from the child process with a return code.
+    ///
+    /// This function terminates the child process and returns control to the parent.
+    ///
+    /// # Arguments
+    ///
+    /// * `retcode` - The exit code to return to the parent process.
+    ///
+    /// # Returns
+    ///
+    /// This function typically does not return, but if it does, returns the status code.
+    ///
+    /// # Safety
+    ///
+    /// This function must only be called from within a forked child process.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `RedisModule_ExitFromChild` is not available.
+    pub fn exit_from_child(&self, retcode: c_int) -> c_int {
+        unsafe { raw::exit_from_child(retcode) }
+    }
+
+    /// Kill a forked child process.
+    ///
+    /// This function terminates a forked child process by its PID.
+    ///
+    /// # Arguments
+    ///
+    /// * `child_pid` - The PID of the child process to kill.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Status::Ok` on success, `Status::Err` on failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `RedisModule_KillForkChild` is not available.
+    pub fn kill_fork_child(&self, child_pid: c_int) -> raw::Status {
+        raw::kill_fork_child(child_pid)
+    }
 }
 
 extern "C" fn post_notification_job_free_callback<F: FnOnce(&Context)>(pd: *mut c_void) {

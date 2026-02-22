@@ -963,3 +963,52 @@ pub fn redis_log(ctx: *mut RedisModuleCtx, msg: &str) {
         RedisModule_Log.unwrap()(ctx, level.as_ptr(), msg.as_ptr());
     }
 }
+
+/// Fork a child process. Returns the child PID on success, -1 on error.
+///
+/// The callback function will be called in the parent process when the child exits.
+///
+/// # Panics
+///
+/// Panics when [RedisModule_Fork] is unavailable.
+pub fn fork(
+    cb: RedisModuleForkDoneHandler,
+    user_data: *mut c_void,
+) -> c_int {
+    unsafe { RedisModule_Fork.unwrap()(cb, user_data) }
+}
+
+/// Send a heartbeat from the child process to indicate progress.
+///
+/// # Safety
+///
+/// This function must only be called from within a forked child process.
+///
+/// # Panics
+///
+/// Panics when [RedisModule_SendChildHeartbeat] is unavailable.
+pub unsafe fn send_child_heartbeat(progress: c_double) {
+    RedisModule_SendChildHeartbeat.unwrap()(progress);
+}
+
+/// Exit from the child process with a return code.
+///
+/// # Safety
+///
+/// This function must only be called from within a forked child process.
+///
+/// # Panics
+///
+/// Panics when [RedisModule_ExitFromChild] is unavailable.
+pub unsafe fn exit_from_child(retcode: c_int) -> c_int {
+    RedisModule_ExitFromChild.unwrap()(retcode)
+}
+
+/// Kill a forked child process.
+///
+/// # Panics
+///
+/// Panics when [RedisModule_KillForkChild] is unavailable.
+pub fn kill_fork_child(child_pid: c_int) -> Status {
+    unsafe { RedisModule_KillForkChild.unwrap()(child_pid).into() }
+}
